@@ -10,7 +10,7 @@ savenames = [False,"",""]
 
 class pipe:
     def __init__(self, target, exclude_values_limit=-1, cramers_v_cut=0.08, 
-                 istrain=True, impute_method="median", require_individual_correlation=True, include_nan=False):
+                 istrain=True, impute_method="median", require_individual_correlation=True, include_nan=False, breakup=[]):
         self.target = target
         self.exclude_values_limit = exclude_values_limit
         self.cramers_v_cut = cramers_v_cut
@@ -18,6 +18,7 @@ class pipe:
         self.impute_method = impute_method
         self.require_individual_correlation = require_individual_correlation
         self.include_nan = include_nan
+        self.breakup = breakup
 
         if exclude_values_limit == -1:
             self.exclude_values_limit = 10
@@ -28,7 +29,7 @@ class pipe:
         originals = []
         class prepare(BaseEstimator, TransformerMixin):
             def __init__(self, params):
-                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan = params
+                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan, self.breakup = params
 
 
             def fit(self, X, y=None):
@@ -64,11 +65,6 @@ class pipe:
 
                     return df
                 
-                originals = X.select_dtypes(include=['object']).columns
-                originals = originals.difference([self.target])
-
-                categorical_columns = X.select_dtypes(include=['object']).columns
-
                 # Function to calculate Cramér's V
                 def cramers_v(confusion_matrix):
                     chi2 = chi2_contingency(confusion_matrix)[0]
@@ -77,6 +73,31 @@ class pipe:
                     
                     return np.nan_to_num(cramers_v_value)
 
+                #breakup here
+                if len(self.breakup) != 0:  # breakup function
+                    j = 0
+                    while j < (len(self.breakup)):
+                        if self.breakup[j] in X.columns:
+                            split_columns = X[self.breakup[j]].str.split(self.breakup[j+1], expand=True)
+
+                            for col in split_columns.columns:
+                                numeric_count = pd.to_numeric(split_columns[col], errors='coerce').notnull().sum()
+                                total_count = len(split_columns[col])
+                                
+                                if numeric_count / total_count >= 0.7:
+                                    split_columns[col] = pd.to_numeric(split_columns[col], errors='coerce')
+                                    split_columns[col] = split_columns[col].astype('float64')
+
+                            split_columns.columns = [f'{str(self.breakup[j])}_part_{i+1}' for i in range(split_columns.shape[1])]
+                            X = pd.concat([X, split_columns], axis=1)
+                            X = X.drop(self.breakup[j], axis=1)
+                            j += 2
+                
+                originals = X.select_dtypes(include=['object']).columns
+                originals = originals.difference([self.target])
+
+                categorical_columns = X.select_dtypes(include=['object']).columns
+                
 
                 for column in categorical_columns:
 
@@ -133,7 +154,7 @@ class pipe:
                     
         class Imputermain(BaseEstimator, TransformerMixin):
             def __init__(self, params):
-                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan = params
+                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan, self.breakup = params
 
             def fit(self, X, y=None):
                 return self
@@ -151,7 +172,7 @@ class pipe:
         
         class FeatureEncoder(BaseEstimator, TransformerMixin):
             def __init__(self, params):
-                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan = params
+                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan, self.breakup = params
 
             def fit(self, X, y=None):
                 return self
@@ -206,7 +227,7 @@ class pipe:
             
         class FeatureDropper(BaseEstimator, TransformerMixin):
             def __init__(self, params):
-                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan = params
+                self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan, self.breakup = params
             def fit(self, X, y=None):
                 return self
             def transform(self, X):
@@ -214,7 +235,7 @@ class pipe:
                 return X.drop(originals, axis=1, errors='ignore')
         
 
-        passpipeline = [self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan]
+        passpipeline = [self.target, self.exclude_values_limit, self.cramers_v_cut, self.istrain, self.impute_method, self.require_individual_correlation, self.include_nan, self.breakup]
         return  savenames, Pipeline([
                             ('prepare', prepare(passpipeline)),
                             ('ageimputer', Imputermain(passpipeline)),

@@ -7,7 +7,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
 import pandas.api.types as ptypes
-
 from .pipe import pipe
 
 score = -1
@@ -15,8 +14,9 @@ dtype =""
 
 class RFC:
     def __init__(self, trainpath, predictpath, target, savepath, split=0.2,
-                num_estimators=[100], depths=[None], min_samples_split=[3], exclude_values_limit=-1, require_individual_correlation=True,
-                cramers_v_cut=0.08, impute_method="median", include_nan=False ):
+                num_estimators=[100], depths=[None], min_samples_split=[3], exclude_values_limit=-1,
+                require_individual_correlation=True,
+                cramers_v_cut=0.08, impute_method="median", include_nan=False, breakup=[] ):
         self.trainpath = trainpath
         self.predictpath = predictpath
         self.target = target
@@ -30,7 +30,7 @@ class RFC:
         self.cramers_v_cut = cramers_v_cut
         self.impute_method = impute_method
         self.include_nan = include_nan
-
+        self.breakup = breakup
 
         self.firstcolname = ""
 
@@ -62,7 +62,29 @@ class RFC:
         return strat_train_set, strat_test_set
     def dataisbad(self, train, predictit, target):
 
+        if target not in train.columns:
+            print("ERROR ------ your target is not found in the train data")
+            return True
+
+        if len(train.columns) > len(predictit.columns) + 1:
+            print("ERROR ------ your prediction data has notably less columns than the train data")
         
+        if len(train.columns) <= len(predictit.columns):
+            print("ERROR ------ your prediction data has more columns than the train set")
+
+        if len(self.breakup) != 0 and len(self.breakup) % 2 != 0:
+            print("ERROR ------ your breakup array must contain an even number of features. Canceled breakup")
+            self.breakup = []
+
+        j = 0
+        while j< len(self.breakup):
+            if self.breakup[j] not in train.columns:
+                print("ERROR ------ column %s in your breakup array doesn't exist. It is deleted from breakup" % self.breakup[j])
+                self.breakup.pop(j)
+                self.breakup.pop(j)
+                j -= 2
+            j += 2
+
 
         return False
     def prepforpredict(self, train, test):
@@ -150,6 +172,7 @@ class RFC:
         print("The predicted accuracy for this model (given a simaler prediction set) is: ")
         print(score)
     def finish(self, model, predict, id, savepath, savenames):
+        global dtype
         scaler = StandardScaler()
         scaled_predict = scaler.fit_transform(predict)
 
@@ -168,7 +191,7 @@ class RFC:
         if dtype == bool:
             final_df[self.target] = final_df[self.target].map({1: True, 0: False})
 
-        #final_df[self.firstcolname] = final_df[self.firstcolname].astype('int32')
+        final_df[self.target] = final_df[self.target].astype(dtype)
 
         print(final_df.head(20))
         final_df.to_csv(savepath, index=False)
@@ -177,6 +200,7 @@ class RFC:
 
 
     def complete(self):
+        print("Starting RFC")
         train = pd.read_csv(self.trainpath)
         predictit = pd.read_csv(self.predictpath)
 
@@ -184,16 +208,18 @@ class RFC:
         
         self.firstcolname = train.columns[0]
 
-        train = self.prepforuse(train)
-
         if self.dataisbad(train, predictit, self.target):
             print("ERROR PROGRAM SHUT DOWN")
             return
 
+        train = self.prepforuse(train)
+
         strat_train_set, strat_test_set = self.splittrain(train)
 
-        pipeline = pipe(self.target,require_individual_correlation=True, exclude_values_limit=self.exclude_values_limit,
-                        cramers_v_cut=self.cramers_v_cut, impute_method=self.impute_method, include_nan=self.include_nan)
+        pipeline = pipe(self.target,require_individual_correlation=self.require_individual_correlation,
+                        exclude_values_limit=self.exclude_values_limit,
+                        cramers_v_cut=self.cramers_v_cut, impute_method=self.impute_method,
+                        include_nan=self.include_nan, breakup=self.breakup)
         savenames, pipeline = pipeline.make()
 
         strat_train_set = pipeline.fit_transform(strat_train_set)
@@ -220,9 +246,7 @@ class RFC:
         import os
         global score
         print("Begun")
-        cycle = [False,True]
-        
-        import os
+        cycle = [True,False]
 
         def increment_path(base_path, iteration):
             directory, filename = os.path.split(base_path)
